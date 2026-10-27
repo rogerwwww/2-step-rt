@@ -161,6 +161,48 @@ This combines all information required for prediction into one file.
 A model trained on 171 manually curated reversed-phase datasets from RepoRT (version 94f43c1b) is
 provided in the `models` subdirectory (`models/2-step0525.pt`).
 
+## Broad five-method RT prediction
+
+For the Broad CN, HP, CP, HN, and C18P workbooks under `data/`, use the specialized
+workflow described in [SPECIALIZED.md](SPECIALIZED.md). It uses five binary
+method/polarity features, the existing molgpu `split_1.tsv` assignments, and
+training-fitted per-method RT scaling and calibration.
+
+| Code | Chromatography | Polarity |
+| --- | --- | --- |
+| CN | C18 | Negative |
+| HP | HILIC | Positive |
+| CP | C8 | Positive |
+| HN | HILIC | Negative |
+| C18P | C18 | Positive |
+
+Workbooks, split snapshots, trained specialized models, and generated reports
+are local inputs/outputs and are not included in this repository. Preparation
+requires access to the reference split described in [SPECIALIZED.md](SPECIALIZED.md).
+
+```bash
+conda env create -f env_specialized.yaml
+conda run -n 2-step-specialized python prepare_specialized.py \
+    --unmatched_policy train --expected_unmatched_keys 335
+conda run -n 2-step-specialized python train_specialized.py \
+    --data_dir data/specialized --out_dir results/specialized
+```
+
+Add `--gpu` to training on a machine with CUDA-enabled PyTorch. The local
+environment specification uses CPU PyTorch for preparation and smoke testing.
+
+Predict with a calibrated specialized model and a TSV containing `smiles`:
+
+```bash
+conda run -n 2-step-specialized python predict.py \
+    --model results/specialized/model.pt --method CN \
+    --input_compounds compounds.tsv --out predictions.tsv
+```
+
+Predicted RTs are in minutes. The specialized workflow also supports held-out
+evaluation, MS2-supported data selection, and same-formula PubChem retrieval;
+see [SPECIALIZED.md](SPECIALIZED.md) for commands and provenance requirements.
+
 ## Evaluation of retention order prediction accuracy
 
 ```bash

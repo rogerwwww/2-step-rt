@@ -7,6 +7,7 @@ from logging import info, warning
 from time import time
 from datetime import timedelta
 from itertools import combinations, product
+from math import isqrt
 from random import sample, shuffle
 from utils import pair_weights
 import pandas as pd
@@ -84,8 +85,17 @@ class RankDataset(Dataset):
     add_sysfeatures_to_graphs: bool=False
     sysfeatures_graphs_mode: Literal['bond', 'atom']='bond'
     include_special_atom_features: bool=False
+    rt_ranges: Optional[Dict[str, float]] = None # training-fitted ranges for dimensionless pair weights
+    uniform_pair_sampling: bool = False # uniformly cap the candidate pairs without enumerating all pairs
 
     def __post_init__(self):
+        if self.rt_ranges is not None:
+            if self.dynamic_weights or not self.no_inter_pairs:
+                raise ValueError('rt_ranges requires fixed weights and within-method pairs')
+            for method in set(self.dataset_info or []):
+                span = self.rt_ranges.get(method, 0)
+                if not np.isfinite(span) or span <= 0:
+                    raise ValueError(f'{method}: RT range must be finite and positive')
         if (isinstance(self.x_extra, np.ndarray)):
             self.x_extra = self.x_extra.astype('float32')
         if (isinstance(self.x_sys, np.ndarray)):
@@ -164,7 +174,8 @@ class RankDataset(Dataset):
                 it = self.dataset_pair_it(groups[group], self.pair_step, self.pair_stop,
                                           max_indices_size=self.max_indices_size,
                                           max_num_pairs=self.max_num_pairs,
-                                          obl_indices=confl_indices)
+                                          obl_indices=confl_indices,
+                                          uniform=self.uniform_pair_sampling)
                 if (logger.level <= logging.INFO):
                     from tqdm import tqdm
                     it = tqdm(it)
@@ -303,15 +314,16 @@ class RankDataset(Dataset):
                         nr_group_pairs_max = nr_group_pairs_max
                 else:
                     nr_group_pairs = nr_group_pairs_max
+                span = self.rt_ranges[g] if self.rt_ranges is not None else 1.0
                 weights_mod = pair_weights(smiles1=self.x_ids[x1_indices[i]], smiles2=self.x_ids[x2_indices[i]],
-                                           rt_diff=rt_diff,
+                                           rt_diff=rt_diff / span,
                                            nr_group_pairs=nr_group_pairs, nr_group_pairs_max=nr_group_pairs_max,
                                            confl_weights_modifier=weight_modifier, confl_pair_list=self.conflicting_smiles_pairs,
                                            only_confl=self.only_confl,
                                            weight_steepness=self.weight_steepness,
                                            weight_mid=self.weight_mid,
                                            max_rt=groups_max_rts[g] if self.dynamic_weights else None,
-                                           epsilon=self.epsilon, discard_smaller_than_epsilon=self.discard_smaller_than_epsilon)
+                                           epsilon=self.epsilon / span, discard_smaller_than_epsilon=self.discard_smaller_than_epsilon)
                 if (rt_diff < self.epsilon and weights_mod is not None and self.discard_smaller_than_epsilon):
                     print(rt_diff, 'should this pair not have been discarded?')
                 weights[i] = (weights_mod * weights[i]) if weights_mod is not None else None
@@ -350,8 +362,23 @@ class RankDataset(Dataset):
     @staticmethod
     def dataset_pair_it(indices, pair_step=1, pair_stop=None,
                         max_indices_size=None, max_num_pairs=None,
-                        obl_indices=set()):
+                        obl_indices=set(), uniform=False):
         n = len(indices)
+
+        if uniform and max_num_pairs is not None:
+            if pair_step != 1 or pair_stop is not None or max_indices_size is not None or obl_indices:
+                raise ValueError('Uniform pair sampling requires all within-method candidate pairs')
+            total = n * (n - 1) // 2
+            for rank in sample(range(total), min(max_num_pairs, total)):
+                # Unrank the upper triangular matrix without materializing combinations.
+                i = ((2 * n - 1) - isqrt((2 * n - 1) ** 2 - 8 * rank)) // 2
+                start = i * (2 * n - i - 1) // 2
+                if start > rank:
+                    i -= 1
+                    start = i * (2 * n - i - 1) // 2
+                j = i + 1 + rank - start
+                yield indices[i], indices[j], 1.0
+            return
 
         if (max_indices_size is not None):
             it = sorted(sample(list(range(n)), min(max_indices_size, n)))
@@ -368,7 +395,7 @@ class RankDataset(Dataset):
                            (n if pair_stop is None else min(i + pair_stop, n)),
                            pair_step):
                 if (frozenset((indices[i], indices[j])) not in obl_indices):
-                    if (max_num_pairs is not None and non_obl_pairs > max_num_pairs):
+                    if (max_num_pairs is not None and non_obl_pairs >= max_num_pairs):
                         do_break = True
                         break
                     yield indices[i], indices[j], 1.0

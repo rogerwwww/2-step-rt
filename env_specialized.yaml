@@ -1,0 +1,23 @@
+name: 2-step-specialized
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.12
+  - chemprop=1.6.1
+  - pytorch=2.5
+  - cpuonly
+  - rdkit=2025.03.6
+  - numpy<2
+  - pandas<3
+  - statsmodels<0.15
+  - scikit-learn<1.7
+  - pulp<4
+  - coincbc
+  - tensorboard
+  - tqdm
+  - pyyaml
+  - openpyxl
+  - typed-argument-parser
+  - pytest
+  - setuptools<82

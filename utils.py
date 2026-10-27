@@ -520,10 +520,10 @@ class Data:
         # so are compounds (smiles) with multiple rts
         # unless they're the same or (TODO:) handled in a smart manner
         old_len0 = len(df)
-        df = df.drop_duplicates(['smiles', 'rt'])
+        df = df.drop_duplicates(['dataset_id', 'smiles', 'rt'])
         old_len1 = len(df)
         if (self.remove_doublets):
-            df = df.drop_duplicates('smiles', keep=False)
+            df = df.drop_duplicates(['dataset_id', 'smiles'], keep=False)
             info(f'{dataset_id}: removing doublets and duplicates, {old_len0}→{old_len1}→{len(df)}')
         else:
             info(f'{dataset_id}: removing duplicates, {old_len0}→{old_len1}')
@@ -589,20 +589,24 @@ class Data:
         # so are compounds (smiles) with multiple rts
         # unless they're the same or (TODO:) handled in a smart manner
         old_len0 = len(df)
-        df = df.drop_duplicates(['smiles', 'rt'])
+        df = df.drop_duplicates(['dataset_id', 'smiles', 'rt'])
         old_len1 = len(df)
         if (self.remove_doublets):
-            df = df.drop_duplicates('smiles', keep=False)
+            df = df.drop_duplicates(['dataset_id', 'smiles'], keep=False)
             info(f'{data_path}: removing doublets and duplicates, {old_len0}→{old_len1}→{len(df)}')
         else:
             info(f'{data_path}: removing duplicates, {old_len0}→{old_len1}')
-        if (self.metadata_void_rt and 'column.t0' in df.columns):
-            metadata_void_rt_guess = df['column.t0'].iloc[0] * self.void_factor
-            void_rt = metadata_void_rt_guess if metadata_void_rt_guess > 0 else void_rt
-        self.void_info[df.dataset_id.iloc[0]] = void_rt
+        if df.empty:
+            raise ValueError(f'{data_path}: no usable rows after filtering')
+        for dataset_id, group in df.groupby('dataset_id'):
+            dataset_void = void_rt
+            if self.metadata_void_rt and 'column.t0' in group:
+                guess = group['column.t0'].iloc[0] * self.void_factor
+                dataset_void = guess if guess > 0 else void_rt
+            self.void_info[dataset_id] = dataset_void
         self.void_info[data_path] = void_rt
         if (self.remove_void_compounds):
-            df = df.loc[df.rt >= void_rt]
+            df = df.loc[df.rt >= df.dataset_id.map(self.void_info)]
         # flag dataset as train/val/test
         df['split_type'] = split_type
         if (self.df is None):

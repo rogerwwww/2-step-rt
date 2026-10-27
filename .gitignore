@@ -5,3 +5,10 @@
 /*.pkl
 /*.log
 /*.json
+/results/
+/.pytest_cache/
+**/__pycache__/
+/data/
+/reports/
+/sites/
+/s41592-026-03243-2.pdf

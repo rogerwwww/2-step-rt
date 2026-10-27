@@ -46,7 +46,8 @@ def load_model(path: str, all_in_one:bool=False):
 
 class PredictArgs(Tap):
     input_compounds: str                 # TSV file with `smiles` and `rt` columns
-    input_metadata: str                  # yaml file with at least `column.name`, `eluent.A.pH`, and `column.t0` specified
+    input_metadata: Optional[str] = None # YAML for original metadata-based models
+    method: Optional[str] = None         # CN/HP/CP/HN/C18P for a packaged specialized model
     model: str                           # model to load
     gpu: bool = False                    # whether to use GPU for predictions
     output_roi: bool = False             # include Retention Order Index (ROI) in output
@@ -66,6 +67,35 @@ if __name__ == '__main__':
     # load model
     info('load model...')
     model = load_model(args.model, all_in_one=True)
+    if 'specialized' in getattr(model, 'extra_storage', {}):
+        from specialized import METHODS, structure_identity, predict_frame, set_model_device
+        if args.method not in METHODS or args.input_metadata is not None:
+            raise ValueError('Specialized prediction requires --method CN|HP|CP|HN|C18P and no --input_metadata')
+        device = torch.device('cuda' if args.gpu else 'cpu')
+        if args.gpu and not torch.cuda.is_available():
+            raise ValueError('--gpu requested but CUDA is unavailable')
+        set_model_device(model, device)
+        frame = pd.read_csv(args.input_compounds, sep='\t')
+        smiles_column = 'smiles' if 'smiles' in frame else 'smiles.std' if 'smiles.std' in frame else None
+        if smiles_column is None:
+            raise ValueError('Input compounds require a smiles or smiles.std column')
+        original_columns = frame.columns.tolist()
+        # Validate structures without deduplicating or reordering the query rows.
+        identities = {s: structure_identity(s)[0] for s in frame[smiles_column].unique()}
+        query = frame.copy()
+        query['smiles'] = query[smiles_column].map(identities)
+        query['dataset_id'] = args.method
+        result = predict_frame(model, query, batch_size=args.batch_size)
+        frame['rt_pred'] = result.rt_pred.to_numpy()
+        if args.output_roi:
+            frame['roi'] = result.roi.to_numpy()
+        output_columns = original_columns + (['roi'] if args.output_roi and 'roi' not in original_columns else [])
+        if 'rt_pred' not in output_columns:
+            output_columns.append('rt_pred')
+        frame[output_columns].to_csv(args.out if args.out else sys.stdout, sep='\t', index=False)
+        sys.exit(0)
+    if args.method is not None or args.input_metadata is None:
+        raise ValueError('Original models require --input_metadata and do not accept --method')
     data_args = model.extra_storage['data_args']
     data_args['repo_root_folder'] =  args.repo_root_folder
     sysfeature_scaler = model.extra_storage['sysfeature_scaler']

@@ -135,8 +135,9 @@ class MPNranker(nn.Module):
                     graphs_batch = dmpnn_batch(graphs_batch)
                 else:
                     raise NotImplementedError(self.encoder)
-                batch = (graphs_batch, default_convert(extra[start:end]),
-                         default_convert(sysf[start:end]))
+                device = next(self.parameters()).device
+                batch = (graphs_batch, torch.as_tensor(extra[start:end], device=device),
+                         torch.as_tensor(sysf[start:end], device=device))
                 # if (input('pdb') == 'y'):
                 #     import pdb; pdb.set_trace()
                 preds.append(self((batch, ))[0].cpu().detach().numpy())
